@@ -2,15 +2,29 @@ const express = require('express');
 const app = express();
 const bodyParser = require('body-parser');
 const mongoose = require('mongoose');
+const mongodb = require('mongodb');
 const passport = require('passport');
 const LocalStrategy = require('passport-local').Strategy;
 const cookieParser = require('cookie-parser');
 const session = require('express-session');
 const crypto = require('crypto');
-
+const fs = require('fs');
 
 const User = require('./models/user.js');
+const Party = require('./models/party.js');
 // const router = require('./routes')(app, User);
+
+// socket 에서 사용자의 닉네임을 정해준다.
+let annonymous = 0;
+const annonymousList = ['악어', '개미핥기', '아르마딜로', '오소리', '박쥐', '비버', '버팔로', '낙타', '카멜레온', '치타', '다람쥐', '친칠라', '가마우지', '코요테', '까마귀'
+                    , '공룡', '돌고래', '오리', '코끼리', '여우', '흰 족제비', '개구리', '기린', '회색 곰', '고슴도치', '하마', '하이에나'];
+
+                    
+/* open the server */
+const server = app.listen(80, () => {
+    console.log('Server is running at port 2080');
+});
+const io = require('socket.io')(server);
 
 app.use(session({
     key: 'sid',
@@ -23,10 +37,10 @@ app.use(session({
 }));
 app.use(passport.initialize());
 app.use(passport.session());
-// passportConfig();
 
 
 /* DB connection setting */
+const MongoClient = mongodb.MongoClient;
 const db = mongoose.connection;
 db.on('error', console.error);
 db.once('open', () => {
@@ -94,7 +108,7 @@ passport.use(new LocalStrategy({ // local 전략을 세움
                     return done(null, false, {message: '잘못된 phonenum 또는 password 입니다'});
                 }
             });
-        }
+        } 
     });
 
     // User.findOne({ phoneNumber: phoneNumber }, (err, user) => {
@@ -109,24 +123,49 @@ passport.use(new LocalStrategy({ // local 전략을 세움
     // });
 }));
 
+app.use((req, res, next) => {
+    res.locals.currentUser = req.user;
+    next();
+});
+
 
 /* Routing */
-app.post('/sign-up', (req, res) => {
-    if (req.body.password !== req.body.passwordCheck) {
-        console.log('Sign Up: PW and Retype PW is different');
-        return res.json({result: 0});
-    }
+app.get('/', (req, res) => {
+    res.end('Hello World!');
+});
 
-    // 있는 아이디면 오류
-    User.findOne({id: req.body.phoneNumber}, (err, user) => {
+app.get('/party-list', (req, res) => {
+    Party.find({}, (err, party) => {
         if (err) {
             console.log(err);
-            return res.json({result: 0});
+            return res.json('0');
+        }
+        if (party.length === 0) {
+            // 먼가 예외처리
+            console.log("New Party: There are no party detected.");
+            return;
+        }
+        res.send(party);
+        console.log('Party list sended.');
+    });
+});
+
+// 현재 접속중인 유저가 누군지 알고 싶을 때
+app.get('/current-user', (req, res) => {
+    return res.send(req.user);
+});
+
+app.post('/sign-up', (req, res) => {
+    // 있는 아이디면 오류
+    User.findOne({"phoneNumber": req.body.phoneNumber}, (err, user) => {
+        if (err) {
+            console.log(err);
+            return res.json('0');
         }
 
         else if (user !== null) {
             console.log('Sign Up: ID already exists');
-            return res.json({result: 0});
+            return res.json('2');
         }
         else {
             const newuser = new User();
@@ -141,15 +180,16 @@ app.post('/sign-up', (req, res) => {
                     newuser.phoneNumber = req.body.phoneNumber;
                     newuser.company = req.body.company;
                     newuser.account = req.body.account;
+                    newuser.currentTaxiParty = "none";
                     console.log(newuser);
                 
                     newuser.save(err => {
                         if (err) {
                             console.log(err);
-                            return res.json({result: 0});
+                            return res.json('0');
                         }
                         console.log('Sign up: Good database created');
-                        return res.json({result: 1});
+                        return res.json('1');
                     });
                 });
             });
@@ -165,8 +205,7 @@ app.post('/log-in', (req, res) => {
             return res.status(400).send([user, "Cannot log in", info]);
         }
         req.login(user, (err) => {
-            console.log("Log in Success");
-            return res.json({result: 1});
+            return res.send(user);
         });
     })(req, res);
 
@@ -204,8 +243,164 @@ app.post('/log-in', (req, res) => {
     // });
 });
 
+app.post('/new-party', (req, res) => {
+    console.log("new party signal is entered");
+    let newParty = new Party;
+    newParty.title = req.body.title;
+    newParty.departure = req.body.departure;
+    newParty.destination = req.body.destination;
+    newParty.numLeft = req.body.numLeft;
+    newParty.explanation = req.body.explanation;
+    console.log("New Party: " + newParty);
 
-/* open the server */
-const server = app.listen(80, () => {
-    console.log('Server is running at port 2080');
+    newParty.save((err) => {
+        if (err) {
+            console.log("New Party Error: " + err);
+            return res.json('0');
+        }
+        console.log("New Party: good database created");
+        res.json('1');
+    });
+});
+
+app.put('/enter-party', (req, res) => {
+    User.findOne({"phoneNumber": req.body.phoneNumber}, (err, user) => {
+        if (err) console.log(err);
+        if(!book) return res.status(404).json({ error: 'user not found' });
+
+        user.currentTaxiParty = req.body.currentTaxiParty;
+        user.save((err) => {
+            if (err) console.log(err);
+            res.json('user info updated');
+        });
+    });
+});
+
+let url = 'mongodb://localhost:27017';
+MongoClient.connect(url,{useNewUrlParser: true}, (err, client) => {
+    if (err)
+        console.log('Unable to connect to the mongoDB server.Error', err);
+    else{
+        io.on('connection', (socket) => {
+            console.log('Client Connection');
+
+            // 유저가 채팅방에 들어왔을 때
+            socket.on('join', (userNickname, chatroomid) => {
+                socket.join(chatroomid);
+                
+                // 이전의 채팅 기록을 불러와서 보여준다.
+                let db = client.db('taxi');
+                db.collection('ChatRoom').find({"chatroomid": chatroomid}).sort({_id:1}).toArray((err, res) => {
+                    var i = 0;
+                    socket.to(chatroomid).emit('loading_start');
+                    while (i < res.length) {
+                        let message = {"message": res[i].message, "nickname": res[i].nickname, "phoneNumber": res[i].phoneNumber, "chatroomid": res[i].chatroomid};
+                        setTimeout(() => {socket.to(chatroomid).emit('load', message);},200);
+                        i++;
+                    }
+                    console.log("Message loading has finished.");
+                    setTimeout(() => {socket.to(chatroomid).emit('loading_end');},200*(res.length)+10);
+                });
+                db.collection('ChatRoom').find({"nickname": userNickname}, (err, user) => {
+                    // 만약 최초로 채팅방에 들어온 유저라면 접속 메세지를 띄워준다
+                    if (user.length === 0) {
+                        let insertJson = {
+                            'phoneNumber' : phoneNumber,
+                            'nickname' : "익명의 " + annonymousList[annonymous % 27],
+                            'message': userNickname + " 님이 접속하셨습니다.",
+                            "chatroomid": chatroomid
+                        };
+                        annonymous++;
+
+                        db.collection("ChatRoom").insert(insertJson, (err) => {
+                            if (err) console.log(err);
+                        });
+
+                        socket.to(chatroomid).emit("join", insertJson);
+                        socket.broadcast.to(chatroomid).emit("join", insertJson);
+                        socket.leave(chatroomid);
+                    }
+                });
+            });
+
+            // 새로운 채팅방이 생성되었을 때
+            socket.on('newchatroom', (phoneNumber, chatroomid) => {
+                console.log('New chatroom is detected.');
+                socket.join(chatroomid);
+
+                let db = client.db('taxi');
+                let insertJson ={
+                    'phoneNumber' : phoneNumber,
+                    'nickname' : "익명의 " + annonymousList[annonymous % 27],
+                    'message': "채팅방에 오신 걸 환영합니다!",
+                    "chatroomid": chatroomid
+                };
+                annonymous++;
+                db.collection('ChatRoom').insert(insertJson, (err) => {
+                    if (err) console.log(err);
+                });
+
+                socket.to(chatroomid).emit("message", insertJson);
+                socket.leave(chatroomid);
+            });
+
+            // 유저가 메세지를 보냈을 때
+            socket.on('messagedetection', (senderNickname, messageContent, chatroomid) => {
+                console.log('Message is Detected!!!!!!!!!!!!!');
+                console.log(senderNickname+" :" +messageContent);
+                socket.join(chatroomid);
+
+                var db = client.db('taxi');
+                //check phonenumber through PersonId
+                db.collection('ChatRoom').findOne({$and:[{'nickname': senderNickname}, {'chatroomid': chatroomid}]}, (err, user) => {
+                    if (err) console.log(err);
+
+                    let phonenum = user.phoneNumber;
+                    let insertJson = {
+                        'phoneNumber' : phonenum,
+                        'nickname' : senderNickname,
+                        'message': messageContent,
+                        'chatroomid': chatroomid
+                    };
+                    db.collection('ChatRoom').insertOne(insertJson, (err) => {
+                        if (err) console.log(err);
+                    });
+                    //채팅 내역 들어올 때 마다 하나 출력
+                    socket.to(chatroomid).emit('message', insertJson);
+                    socket.broadcast.to(chatroomid).emit('message', insertJson);
+                    console.log(insertJson);
+                    socket.leave(chatroomid);
+                });
+
+
+                // var insertJson ={
+                //     'ID' : PersonId,
+                //     'Name' : senderNickname,
+                //     'message': messageContent
+                // };
+
+                // var db = client.db('chatapp');
+                // db.collection('ChatRoom').insertOne(insertJson, function(error, res){
+                // })
+
+                // var db = client.db('chatapp');
+                // //check phonenumber through PersonId
+                // db.collection('user').findOne({'ID': PersonId}, function(err,user){
+                //     var phonenum = user.phonenumber
+                //     let message = {"message":messageContent, "senderName":senderNickname, "phonenumber": phonenum}
+                //     //채팅 내역 들어올 때 마다 하나 출력
+                //     socket.emit('message', message);
+                //     //socket.broadcast.emit('message', message);
+                //     console.log(message);
+                // })
+                // let message = {"message":messageContent, "senderNickname":senderNickname}
+                // socket.broadcast.emit('message', message);
+            });
+
+            socket.on('disconnect', function() {
+                console.log('user has left')
+                //socket.broadcast.emit("userdisconnect","user has left") 
+            });
+        });
+    }
 });

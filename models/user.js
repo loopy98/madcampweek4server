@@ -6,6 +6,7 @@ let userSchema = new Schema({
     password: String,
     company: String,
     account: String,
+    currentTaxiParty: String,
     salt: String
 });
 
