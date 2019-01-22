@@ -9,9 +9,11 @@ const cookieParser = require('cookie-parser');
 const session = require('express-session');
 const crypto = require('crypto');
 const fs = require('fs');
+const twilio = require('twilio');
 
 const User = require('./models/user.js');
 const Party = require('./models/party.js');
+const Token = require('./models/token.js');
 // const router = require('./routes')(app, User);
 
 // socket 에서 사용자의 닉네임을 정해준다.
@@ -19,7 +21,7 @@ let annonymous = 0;
 const annonymousList = ['악어', '개미핥기', '아르마딜로', '오소리', '박쥐', '비버', '버팔로', '낙타', '카멜레온', '치타', '다람쥐', '친칠라', '가마우지', '코요테', '까마귀'
                     , '공룡', '돌고래', '오리', '코끼리', '여우', '흰 족제비', '개구리', '기린', '회색 곰', '고슴도치', '하마', '하이에나'];
 
-                    
+
 /* open the server */
 const server = app.listen(80, () => {
     console.log('Server is running at port 2080');
@@ -155,6 +157,47 @@ app.get('/current-user', (req, res) => {
     return res.send(req.user);
 });
 
+app.post('/send-message', (req, res) => {
+    console.log(req.body.currentTaxiParty);
+
+    Token.findOne({}, (err, token) => {
+        if (err) {
+            console.log(err);
+            return res.send('0');
+        }
+        console.log(token);
+        let client = twilio(token.accountSid, token.authToken);
+
+        User.find({"currentTaxiParty": req.body.currentTaxiParty}, (err, user) => {
+            if (err) {
+                console.log(err);
+                return res.send('0');
+            }
+
+            let content = "택시 팟이 구성되었습니다. 택시 팟에 있는 사람들의 전화번호는, ";
+            for (let i=0; i < user.length; i++) {
+                let temp = "0" + user[i].phoneNumber + " ";
+                content += temp;
+            }
+            content += "입니다.";
+
+            for (let i=0; i < user.length; i++) {
+                client.messages
+                .create({
+                    body: content,
+                    from: '+12673824780',
+                    to: "+82" + user[i].phoneNumber
+                })
+                .then(message => {
+                    console.log(message.sid);
+                    res.send("1");
+                })
+                .done();
+            }
+        });
+    });
+});
+
 app.post('/sign-up', (req, res) => {
     // 있는 아이디면 오류
     User.findOne({"phoneNumber": req.body.phoneNumber}, (err, user) => {
@@ -202,7 +245,7 @@ app.post('/log-in', (req, res) => {
         if (err) console.log('Log in error: '+ err);
         if (!user) {
             console.log("Error 400");
-            return res.status(400).send([user, "Cannot log in", info]);
+            return res.send("Cannot log in");
         }
         req.login(user, (err) => {
             return res.send(user);
@@ -249,6 +292,7 @@ app.post('/new-party', (req, res) => {
     newParty.title = req.body.title;
     newParty.departure = req.body.departure;
     newParty.destination = req.body.destination;
+    newParty.date = req.body.date;
     newParty.numLeft = req.body.numLeft;
     newParty.explanation = req.body.explanation;
     console.log("New Party: " + newParty);
@@ -264,13 +308,30 @@ app.post('/new-party', (req, res) => {
 });
 
 app.put('/enter-party', (req, res) => {
+    Party.findOne({"_id": req.body.currentTaxiParty}, (err, party) => {
+        if (err) console.log(err);
+        if (!party) return res.json({error: 'party not found'});
+
+        let numLeft = party.numLeft;
+        if (numLeft <= 0) {
+            console.log('Selected party is full');
+            return res.json('0');
+        }
+        party.numLeft = numLeft - 1;
+        party.save((err) => {
+            if (err) console.log(err);
+            res.json('party info updated');
+        });
+    });
+
     User.findOne({"phoneNumber": req.body.phoneNumber}, (err, user) => {
         if (err) console.log(err);
-        if(!book) return res.status(404).json({ error: 'user not found' });
+        if(!user) return res.json({ error: 'user not found' });
 
         user.currentTaxiParty = req.body.currentTaxiParty;
         user.save((err) => {
             if (err) console.log(err);
+            console.log('User and party info updated');
             res.json('user info updated');
         });
     });
