@@ -157,6 +157,13 @@ app.get('/current-user', (req, res) => {
     return res.send(req.user);
 });
 
+app.post('/current-taxi-party', (req, res) => {
+    User.findOne({"phoneNumber": req.body.phoneNumber}, (err, user) => {
+        if (err) console.log(err);
+        return res.send(user.currentTaxiParty);
+    });
+});
+
 app.post('/send-message', (req, res) => {
     console.log(req.body.currentTaxiParty);
 
@@ -308,32 +315,79 @@ app.post('/new-party', (req, res) => {
 });
 
 app.put('/enter-party', (req, res) => {
-    Party.findOne({"_id": req.body.currentTaxiParty}, (err, party) => {
-        if (err) console.log(err);
-        if (!party) return res.json({error: 'party not found'});
-
-        let numLeft = party.numLeft;
-        if (numLeft <= 0) {
-            console.log('Selected party is full');
-            return res.json('0');
-        }
-        party.numLeft = numLeft - 1;
-        party.save((err) => {
-            if (err) console.log(err);
-            res.json('party info updated');
-        });
-    });
-
     User.findOne({"phoneNumber": req.body.phoneNumber}, (err, user) => {
+        if (user.currentTaxiParty !== "none") {
+            if (user.currentTaxiParty === req.body.currentTaxiParty) return res.send('0');
+            else {
+                Party.findOne({"_id": req.body.currentTaxiParty}, (err, party) => {
+                    if (err) console.log(err);
+                    else if (!party) return res.json({error: 'party not found'});
+                    else {
+                        let numLeft = party.numLeft;
+                        if (numLeft <= 0) {
+                            console.log('Selected party is full');
+                            return res.json('0');
+                        }
+                        else {
+                            party.numLeft = numLeft - 1;
+                            party.save((err) => {
+                                if (err) console.log(err);
+                                // res.json('party info updated');
+                            });
+                        }
+                    }
+                });
+
+                Party.findOne({"_id": user.currentTaxiParty}, (err, party) => {
+                    if (err) console.log(err);
+                    if (!party) return res.send("party not found");
+                    else {
+                        let numLeft = party.numLeft;
+                        if (numLeft >= 4) {
+                            console.log("empty party");
+                            return res.send('0');
+                        }
+                        else {
+                            party.numLeft = numLeft + 1;
+                            party.save((err) => {
+                                if (err) console.log(err);
+                            });
+                        }
+                    }
+                });
+            }
+        }
+        else {
+            Party.findOne({"_id": req.body.currentTaxiParty}, (err, party) => {
+                if (err) console.log(err);
+                else if (!party) return res.json({error: 'party not found'});
+                else {
+                    let numLeft = party.numLeft;
+                    if (numLeft <= 0) {
+                        console.log('Selected party is full');
+                        return res.json('0');
+                    }
+                    else {
+                        party.numLeft = numLeft - 1;
+                        party.save((err) => {
+                            if (err) console.log(err);
+                            // res.json('party info updated');
+                        });
+                    }
+                }
+            });
+        }
+
         if (err) console.log(err);
         if(!user) return res.json({ error: 'user not found' });
-
-        user.currentTaxiParty = req.body.currentTaxiParty;
-        user.save((err) => {
-            if (err) console.log(err);
-            console.log('User and party info updated');
-            res.json('user info updated');
-        });
+        else {
+            user.currentTaxiParty = req.body.currentTaxiParty;
+            user.save((err) => {
+                if (err) console.log(err);
+                console.log('User and party info updated');
+                res.send('1');
+            });
+        }
     });
 });
 
